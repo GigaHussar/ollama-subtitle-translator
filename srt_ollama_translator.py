@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import List, Iterable
 import requests
+import argparse
 
 # =========================
 # Logging config
@@ -86,15 +87,18 @@ def restart_ollama():
     time.sleep(RESTART_WAIT_SECONDS)
     start_ollama()
 
-def ollama_translate(model: str, block_text: str) -> str:
+def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) -> str:
     """
-    Translate a block of SRT (multiple subtitles) EN->PL using Ollama.
-    Handles streaming JSON lines; joins 'response' fragments.
-    Implements timeout/restart logic.
+    Translate a block of SRT (multiple subtitles) using Ollama.
+    Preserves numbering and timecodes.
     """
-    # Instruction prompt ensures timestamps/indices preserved
+    if src_lang.lower() == "auto":
+        lang_line = f"Detect the source language and translate to {tgt_lang}."
+    else:
+        lang_line = f"Translate the SRT subtitles from {src_lang} to {tgt_lang}."
+
     system_instructions = (
-        "Translate the SRT subtitles from English to Polish.\n"
+        f"{lang_line}\n"
         "- Preserve original numbering and timecodes exactly.\n"
         "- Preserve tags <i>.\n"
         "- Translate only the spoken text, keep line breaks.\n"
@@ -205,7 +209,7 @@ def merge_chunks_if_complete(chunk_dir: Path, total_chunks: int, out_path: Path)
 # =========================
 # Main processing
 # =========================
-def process(input_srt: Path, output_srt: Path, model: str):
+def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_lang: str):
     logger.info("Input:  %s", input_srt)
     logger.info("Output: %s", output_srt)
     chunk_dir = output_srt.with_suffix("")  # drop .srt
@@ -239,7 +243,7 @@ def process(input_srt: Path, output_srt: Path, model: str):
         preview = piece_text[:120].replace("\n", " ")
         logger.info("Translating chunk %d/%d. Preview: %s...", idx + 1, total_chunks, preview + ("..." if len(piece_text) > 120 else ""))
 
-        translated = ollama_translate(model, piece_text)
+        translated = ollama_translate(model, piece_text, src_lang, tgt_lang)
 
         # Write chunk file as zero-padded index
         chunk_file = chunk_dir / f"{idx:06d}.srt"
@@ -254,26 +258,23 @@ def process(input_srt: Path, output_srt: Path, model: str):
 # Entrypoint
 # =========================
 def main(argv: List[str]):
-    if len(argv) != 4:
-        print(f"Usage: python {argv[0]} INPUT.srt OUTPUT.srt MODEL_NAME")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="SRT translator with Ollama")
+    parser.add_argument("input", type=Path, help="INPUT.srt")
+    parser.add_argument("output", type=Path, help="OUTPUT.srt")
+    parser.add_argument("model", help="MODEL_NAME (e.g., mistral, llama3, qwen, etc.)")
+    parser.add_argument("--from-lang", default="English",
+                        help='Source language name (e.g., "English", "fr", "日本語", or "auto" to detect)')
+    parser.add_argument("--to-lang", default="Polish",
+                        help='Target language name (e.g., "Polish", "pl", "Español", "Русский")')
 
-    input_srt = Path(argv[1])
-    output_srt = Path(argv[2])
-    model = argv[3]
+    args = parser.parse_args(argv[1:])
 
-    if not input_srt.exists():
-        logger.error("Input file not found: %s", input_srt)
+    if not args.input.exists():
+        logger.error("Input file not found: %s", args.input)
         sys.exit(2)
 
     try:
-        process(input_srt, output_srt, model)
+        process(args.input, args.output, args.model, args.from_lang, args.to_lang)
     except Exception as e:
         logger.exception("Fatal error: %s", e)
         sys.exit(3)
-
-if __name__ == "__main__":
-    main(sys.argv)
-
-
-
