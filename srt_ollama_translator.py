@@ -1,0 +1,279 @@
+import os
+import sys
+import re
+import time
+import json
+import logging
+import platform
+import subprocess
+from pathlib import Path
+from typing import List, Iterable
+import requests
+
+# =========================
+# Logging config
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("srt-translator")
+
+# =========================
+# Constants
+# =========================
+OLLAMA_URL = "http://127.0.0.1:11434"
+GEN_ENDPOINT = f"{OLLAMA_URL}/api/generate"
+TAGS_ENDPOINT = f"{OLLAMA_URL}/api/tags"
+
+CHUNK_SIZE = 10                # 10 subtitles per piece
+REQ_TIMEOUT_SECONDS = 300      # 5 minutes timeout for translation request
+RESTART_WAIT_SECONDS = 60      # wait 1 minute after restart
+SERVE_BOOT_WAIT_SECONDS = 5    # small wait after `ollama serve`
+MAX_RETRIES = 3                # retry translation per chunk
+
+# =========================
+# Ollama helpers
+# =========================
+def is_ollama_running() -> bool:
+    """Quick health check by pinging /api/tags."""
+    try:
+        logger.debug("Probing Ollama /api/tags ...")
+        r = requests.get(TAGS_ENDPOINT, timeout=2)
+        ok = r.status_code == 200
+        logger.debug("Ollama probe status: %s", ok)
+        return ok
+    except Exception:
+        return False
+
+def start_ollama():
+    """Start Ollama daemon if not already running."""
+    if is_ollama_running():
+        logger.info("Ollama is already running.")
+        return
+    logger.warning("Ollama not running—starting `ollama serve`...")
+    # Start detached; suppress output
+    subprocess.Popen(
+        ["ollama", "serve"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True
+    )
+    time.sleep(SERVE_BOOT_WAIT_SECONDS)
+    if is_ollama_running():
+        logger.info("Ollama started successfully.")
+    else:
+        logger.warning("Ollama may still be starting... continuing with retries later.")
+
+def kill_ollama():
+    """Attempt to terminate Ollama process cross-platform."""
+    sysname = platform.system().lower()
+    logger.warning("Attempting to stop Ollama (platform: %s)...", sysname)
+    try:
+        if "windows" in sysname:
+            # /T to kill child processes, /F to force
+            subprocess.run(["taskkill", "/IM", "ollama.exe", "/F", "/T"], check=False)
+        else:
+            # pkill if available; ignore failure if it's not found
+            subprocess.run(["pkill", "-f", "ollama"], check=False)
+    except Exception as e:
+        logger.error("Error trying to stop Ollama: %s", e)
+
+def restart_ollama():
+    kill_ollama()
+    logger.info("Waiting %s seconds before restart...", RESTART_WAIT_SECONDS)
+    time.sleep(RESTART_WAIT_SECONDS)
+    start_ollama()
+
+def ollama_translate(model: str, block_text: str) -> str:
+    """
+    Translate a block of SRT (multiple subtitles) EN->PL using Ollama.
+    Handles streaming JSON lines; joins 'response' fragments.
+    Implements timeout/restart logic.
+    """
+    # Instruction prompt ensures timestamps/indices preserved
+    system_instructions = (
+        "Translate the SRT subtitles from English to Polish.\n"
+        "- Preserve original numbering and timecodes exactly.\n"
+        "- Preserve tags <i>.\n"
+        "- Translate only the spoken text, keep line breaks.\n"
+        "- Output MUST remain valid SRT for the provided block.\n"
+    )
+    payload = {
+        "model": model,
+        "prompt": f"{system_instructions}\n\n{block_text.strip()}\n",
+        # Optional: make output deterministic-ish
+        "options": {"temperature": 0.2},
+        "stream": True,
+    }
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        logger.info("Requesting translation (attempt %d/%d)...", attempt, MAX_RETRIES)
+        try:
+            with requests.post(
+                GEN_ENDPOINT,
+                json=payload,
+                stream=True,
+                timeout=REQ_TIMEOUT_SECONDS,
+            ) as resp:
+                resp.raise_for_status()
+                parts: List[str] = []
+                for raw in resp.iter_lines(decode_unicode=True):
+                    if not raw:
+                        continue
+                    # Each line is JSON like: {"model":"...","created_at":"...","response":"...","done":false}
+                    try:
+                        obj = json.loads(raw)
+                        if "response" in obj:
+                            parts.append(obj["response"])
+                        if obj.get("done"):
+                            break
+                    except json.JSONDecodeError:
+                        # Sometimes a transport artifact; log and continue
+                        logger.debug("Non-JSON line from stream: %r", raw)
+                text = "".join(parts).strip()
+                if text:
+                    logger.info("Received translated chunk (%d chars).", len(text))
+                    return text
+                else:
+                    logger.warning("Empty translation received.")
+                    raise RuntimeError("Empty translation.")
+        except requests.exceptions.Timeout:
+            logger.error("Translation timed out after %s seconds.", REQ_TIMEOUT_SECONDS)
+            logger.info("Restarting Ollama due to timeout...")
+            restart_ollama()
+        except Exception as e:
+            logger.error("Translation error: %s", e)
+            logger.info("Restarting Ollama and retrying...")
+            restart_ollama()
+
+    raise RuntimeError("Failed to translate chunk after multiple attempts.")
+
+# =========================
+# SRT splitting/merging
+# =========================
+def read_srt_blocks(srt_text: str) -> List[str]:
+    """
+    Split an SRT file into blocks separated by blank lines.
+    Returns a list where each entry is one subtitle block (index+time+text).
+    """
+    # Normalize newlines to \n, then split on blank lines
+    normalized = srt_text.replace("\r\n", "\n").replace("\r", "\n")
+    # Split on two or more newlines (with optional whitespace)
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", normalized) if b.strip()]
+    logger.info("Detected %d subtitle blocks.", len(blocks))
+    return blocks
+
+def chunk_blocks(blocks: List[str], chunk_size: int = CHUNK_SIZE) -> List[List[str]]:
+    """Group blocks into chunk lists of given size."""
+    return [blocks[i:i + chunk_size] for i in range(0, len(blocks), chunk_size)]
+
+def ensure_dir(p: Path):
+    p.mkdir(parents=True, exist_ok=True)
+
+def existing_chunk_count(chunk_dir: Path) -> int:
+    """Count existing chunk files like 000000.srt, 000001.srt ..."""
+    if not chunk_dir.exists():
+        return 0
+    count = sum(1 for f in chunk_dir.iterdir() if f.is_file() and f.suffix == ".srt")
+    return count
+
+def merge_chunks_if_complete(chunk_dir: Path, total_chunks: int, out_path: Path):
+    """
+    If we have all chunk files, merge them into the final SRT.
+    We assume each chunk preserves original numbering/timecodes, so simple concatenation with blank lines is fine.
+    """
+    files = sorted(chunk_dir.glob("*.srt"))
+    if len(files) != total_chunks:
+        logger.info("Merge skipped: %d/%d chunks present.", len(files), total_chunks)
+        return
+
+    logger.info("All %d chunks present—merging into %s", total_chunks, out_path)
+    with out_path.open("w", encoding="utf-8") as out:
+        first = True
+        for f in files:
+            content = f.read_text(encoding="utf-8").strip()
+            if not content:
+                logger.warning("Chunk %s is empty—merge may be invalid.", f.name)
+            if not first:
+                out.write("\n\n")  # separator between chunks
+            out.write(content)
+            first = False
+    logger.info("Merge complete.")
+
+# =========================
+# Main processing
+# =========================
+def process(input_srt: Path, output_srt: Path, model: str):
+    logger.info("Input:  %s", input_srt)
+    logger.info("Output: %s", output_srt)
+    chunk_dir = output_srt.with_suffix("")  # drop .srt
+    # folder like /path/to/output (without .srt)
+    chunk_dir = Path(str(chunk_dir) + "_chunks")
+    ensure_dir(chunk_dir)
+    logger.info("Chunk folder: %s", chunk_dir)
+
+    # Read source SRT
+    srt_text = input_srt.read_text(encoding="utf-8")
+    blocks = read_srt_blocks(srt_text)
+    chunked = chunk_blocks(blocks, CHUNK_SIZE)
+    total_chunks = len(chunked)
+    logger.info("Total chunks: %d (chunk size = %d)", total_chunks, CHUNK_SIZE)
+
+    # Ensure Ollama is up
+    start_ollama()
+
+    # Determine resume index from number of existing chunk files
+    start_idx = existing_chunk_count(chunk_dir)
+    if start_idx > total_chunks:
+        start_idx = total_chunks
+    logger.info("Resuming at chunk index: %d (0-based).", start_idx)
+
+    # Translate remaining chunks
+    for idx in range(start_idx, total_chunks):
+        piece_blocks = chunked[idx]
+        piece_text = "\n\n".join(piece_blocks).strip()
+
+        # Helpful log preview
+        preview = piece_text[:120].replace("\n", " ")
+        logger.info("Translating chunk %d/%d. Preview: %s...", idx + 1, total_chunks, preview + ("..." if len(piece_text) > 120 else ""))
+
+        translated = ollama_translate(model, piece_text)
+
+        # Write chunk file as zero-padded index
+        chunk_file = chunk_dir / f"{idx:06d}.srt"
+        chunk_file.write_text(translated.strip() + "\n", encoding="utf-8")
+        logger.info("Wrote %s (%d bytes).", chunk_file.name, chunk_file.stat().st_size)
+
+    # Attempt merge (only if all chunks are present)
+    merge_chunks_if_complete(chunk_dir, total_chunks, output_srt)
+    logger.info("Done.")
+
+# =========================
+# Entrypoint
+# =========================
+def main(argv: List[str]):
+    if len(argv) != 4:
+        print(f"Usage: python {argv[0]} INPUT.srt OUTPUT.srt MODEL_NAME")
+        sys.exit(1)
+
+    input_srt = Path(argv[1])
+    output_srt = Path(argv[2])
+    model = argv[3]
+
+    if not input_srt.exists():
+        logger.error("Input file not found: %s", input_srt)
+        sys.exit(2)
+
+    try:
+        process(input_srt, output_srt, model)
+    except Exception as e:
+        logger.exception("Fatal error: %s", e)
+        sys.exit(3)
+
+if __name__ == "__main__":
+    main(sys.argv)
+
+
+
