@@ -31,7 +31,6 @@ files:
     -   Exactly one blank line between blocks
     -   No blank lines after timestamps
 -   **Fix** `.srt` files:
-    -   Normalize arrow spacing (`-->`)
     -   Remove illegal blank lines
     -   Preserve original numbering
 -   **Strip italics**:
