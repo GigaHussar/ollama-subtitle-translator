@@ -229,17 +229,16 @@ def normalize_spacing_and_separators(text: str) -> str:
     """
     Normalize SRT while preserving original indices and text:
       - Keep the original index numbers.
-      - Normalize timestamp spacing to ' --> '.
       - Remove blank line(s) immediately after timestamp.
       - Emit exactly one blank line between blocks.
     """
-    logger.info("Normalizing structure, arrow spacing, and separators...")
+    logger.info("Normalizing structure and separators...")
     blocks, _ = parse_blocks_by_pattern(text)
 
     out_lines: List[str] = []
     for idx, b in enumerate(blocks):
         out_lines.append(str(b.index_val))
-        out_lines.append(ARROW_RE.sub(" --> ", b.ts_text.strip()))
+        out_lines.append(b.ts_text.strip())
         for _, t in b.text_lines:
             out_lines.append(t)
         if idx != len(blocks) - 1:
