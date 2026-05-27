@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Iterable
 import requests
 import argparse
-from srt_tools import validate_srt, get_last_end_ms, get_first_start_ms
+from srt_tools import validate_srt, get_last_end_ms, get_first_start_ms, normalize_spacing_and_separators
 
 # =========================
 # Logging config
@@ -167,6 +167,7 @@ def _retry_chunk(original_text: str, translated: str) -> str:
 
 
 def _validate_chunk(translated: str, chunk_num: int, prev_end_ms: int = None) -> str:
+    translated = normalize_spacing_and_separators(translated)
     issues = validate_srt(translated)
     timecode_issues = [i for i in issues if any(k in i for k in (
         "Invalid timestamp", "Start time must be less than", "overlaps"

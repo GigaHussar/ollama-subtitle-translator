@@ -1,37 +1,12 @@
-#!/usr/bin/env python3
+"""
+SRT parsing, validation, and fixing utilities. Imported by the main translator script.
+
+Index ordering is not checked — indices can skip or be out of order.
+Blocks are recognised purely by the pattern: numeric index line + timestamp line.
 """
 
-This version does NOT check index ordering. Indices can skip or be out of order.
-Blocks are recognized purely by the pattern: numeric index line + timestamp line.
-
-Subcommands
------------
-validate:
-  - Checks:
-      * index line is numeric,
-      * timestamp format and spacing ("HH:MM:SS,mmm --> HH:MM:SS,mmm"),
-      * start < end,
-      * at least one text line,
-      * **missing blank line before an index** (enforce exactly one between blocks),
-      * **blank line(s) immediately after a timestamp**,
-      * more than one blank line between blocks.
-fix:
-  - Preserves original indices (no resequencing).
-  - Removes blank line(s) immediately after a timestamp.
-  - Writes **exactly one** blank line between blocks.
-strip-italics:
-  - Removes <i> and </i> tags (case-insensitive) without touching other text.
-
-Usage:
-  python srt_tools.py validate path/to/file.srt [-v|-vv]
-  python srt_tools.py fix path/to/file.srt -o path/to/output.srt [-v|-vv]
-  python srt_tools.py strip-italics path/to/file.srt -o path/to/output.srt [-v|-vv]
-"""
-
-import argparse
 import logging
 import re
-from pathlib import Path
 from typing import List, Tuple, Optional
 
 # --- Logging setup -----------------------------------------------------------
@@ -58,16 +33,6 @@ def is_valid_timecode(tc: str) -> bool:
 
 
 # --- Helpers -----------------------------------------------------------------
-def read_text(path: Path) -> str:
-    logger.debug(f"Reading file: {path}")
-    return path.read_text(encoding="utf-8-sig", errors="replace")
-
-
-def write_text(path: Path, text: str) -> None:
-    logger.debug(f"Writing file: {path}")
-    path.write_text(text, encoding="utf-8")
-
-
 def hms_to_ms(h: int, m: int, s: int, ms: int) -> int:
     return ((h * 60 + m) * 60 + s) * 1000 + ms
 
@@ -325,66 +290,4 @@ def get_first_start_ms(text: str) -> Optional[int]:
     return None
 
 
-# --- CLI --------------------------------------------------------------------
-def main():
-    parser = argparse.ArgumentParser(description="Validate and clean .srt files.")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    # validate
-    p_val = sub.add_parser("validate", help="Validate SRT structure and spacing.")
-    p_val.add_argument("input", type=Path)
-
-    # fix
-    p_fix = sub.add_parser("fix", help="Normalize spacing and separators; preserve indices.")
-    p_fix.add_argument("input", type=Path)
-    p_fix.add_argument("-o", "--output", type=Path, required=True, help="Where to write the fixed SRT.")
-
-    # strip-italics
-    p_strip = sub.add_parser("strip-italics", help="Remove <i> and </i> tags.")
-    p_strip.add_argument("input", type=Path)
-    p_strip.add_argument("-o", "--output", type=Path, required=True, help="Where to write the result.")
-
-    # logging verbosity
-    parser.add_argument("-v", "--verbose", action="count", default=0,
-                        help="Increase log verbosity (-v for INFO, -vv for DEBUG).")
-
-    args = parser.parse_args()
-
-    # Adjust logging level
-    if args.verbose >= 2:
-        logger.setLevel(logging.DEBUG)
-    elif args.verbose == 1:
-        logger.setLevel(logging.INFO)
-    else:
-        logger.setLevel(logging.WARNING)
-
-    logger.debug(f"Parsed arguments: {args}")
-
-    text = read_text(args.input)
-
-    if args.cmd == "validate":
-        logger.debug("Running 'validate' command")
-        issues = validate_srt(text)
-        if not issues:
-            print("✅ SRT appears valid.")
-        else:
-            print("❌ SRT issues found:")
-            for i, msg in enumerate(issues, start=1):
-                print(f"{i:2d}. {msg}")
-
-    elif args.cmd == "fix":
-        logger.debug("Running 'fix' command")
-        out = normalize_spacing_and_separators(text)
-        write_text(args.output, out)
-        print(f"✅ Wrote normalized file to: {args.output}")
-
-    elif args.cmd == "strip-italics":
-        logger.debug("Running 'strip-italics' command")
-        out = strip_italics(text)
-        write_text(args.output, out)
-        print(f"✅ Wrote italics-stripped file to: {args.output}")
-
-
-if __name__ == "__main__":
-    main()
 
