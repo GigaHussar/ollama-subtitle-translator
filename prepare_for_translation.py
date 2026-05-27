@@ -39,7 +39,8 @@ def prepare_chunk(blocks: List[str]) -> Tuple[str, List[Tuple[str, str]]]:
     return text_to_translate, metadata
 
 
-def check_block_count(parts: List[str], metadata: List[Tuple[str, str]]) -> str | None:
+def check_block_count(translated_text: str, metadata: List[Tuple[str, str]]) -> str | None:
+    parts = [p.strip() for p in translated_text.strip().split("\n\n") if p.strip()]
     if len(parts) != len(metadata):
         return f"Block count mismatch: got {len(parts)} translated blocks, expected {len(metadata)}."
     return None
@@ -55,10 +56,6 @@ def rebuild_chunk(translated_text: str, metadata: List[Tuple[str, str]]) -> str:
     Returns valid SRT string, or raises ValueError if block count doesn't match.
     """
     parts = [p.strip() for p in translated_text.strip().split("\n\n") if p.strip()]
-
-    error = check_block_count(parts, metadata)
-    if error:
-        raise ValueError(error)
 
     out_lines: List[str] = []
     for i, ((index, timestamp), text) in enumerate(zip(metadata, parts)):
