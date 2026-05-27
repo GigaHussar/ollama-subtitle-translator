@@ -50,6 +50,11 @@ TS_PARSE_RE = re.compile(
 )
 ARROW_RE = re.compile(r"\s*-->\s*")
 ITALICS_TAG_RE = re.compile(r"</?i>", flags=re.IGNORECASE)
+TIMECODE_RE = re.compile(r"^\d{2}:\d{2}:\d{2},\d{3}$")
+
+
+def is_valid_timecode(tc: str) -> bool:
+    return bool(TIMECODE_RE.match(tc.strip()))
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -182,24 +187,42 @@ def validate_srt(text: str) -> List[str]:
     issues.extend(parse_issues)
 
     # Timestamp checks and exact arrow spacing
+    prev_end_ms: Optional[int] = None
+    prev_end_text: Optional[str] = None
+    prev_ts_ln: Optional[int] = None
     for b in blocks:
         m = TS_PARSE_RE.match(b.ts_text)
         if not m:
             issues.append(f"Line {b.ts_ln}: Invalid timestamp format.")
+            prev_end_ms = None
             continue
 
         # exact " --> " spacing
         if ARROW_RE.sub(" --> ", b.ts_text) != b.ts_text:
             issues.append(f"Line {b.ts_ln}: Spacing around '-->' should be exactly one space on each side.")
 
-        # start < end
         sh, sm, ss, sms = map(int, (m["sh"], m["sm"], m["ss"], m["sms"]))
         eh, em, es, ems = map(int, (m["eh"], m["em"], m["es"], m["ems"]))
-        if hms_to_ms(sh, sm, ss, sms) >= hms_to_ms(eh, em, es, ems):
+        start_ms = hms_to_ms(sh, sm, ss, sms)
+        end_ms = hms_to_ms(eh, em, es, ems)
+
+        # start < end
+        if start_ms >= end_ms:
             issues.append(
                 f"Line {b.ts_ln}: Start time must be less than end time "
                 f"({m['sh']}:{m['sm']}:{m['ss']},{m['sms']} >= {m['eh']}:{m['em']}:{m['es']},{m['ems']})."
             )
+
+        # this block must not overlap the previous one
+        if prev_end_ms is not None and start_ms < prev_end_ms:
+            issues.append(
+                f"Line {b.ts_ln}: Block overlaps previous block ending at line {prev_ts_ln} "
+                f"({m['sh']}:{m['sm']}:{m['ss']},{m['sms']} < {prev_end_text})."
+            )
+
+        prev_end_ms = end_ms
+        prev_end_text = f"{m['eh']}:{m['em']}:{m['es']},{m['ems']}"
+        prev_ts_ln = b.ts_ln
 
     # Raw sweep to catch >1 blank line sequences anywhere
     lines = text.splitlines()
