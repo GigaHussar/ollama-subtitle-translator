@@ -71,13 +71,15 @@ def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) 
     if src_lang.lower() == "auto":
         lang_line = f"Detect the source language and translate to {tgt_lang}."
     else:
-        lang_line = f"Translate the SRT subtitles from {src_lang} to {tgt_lang}."
+        lang_line = f"Translate the following subtitles from {src_lang} to {tgt_lang}."
 
     system_instructions = (
         f"{lang_line}\n"
+        "- You will receive subtitle text blocks separated by blank lines.\n"
+        "- Translate each block and return them in the same order, separated by blank lines.\n"
+        "- Do not add or remove blocks.\n"
         "- Preserve tags <i>.\n"
-        "- Translate only the spoken text, keep line breaks.\n"
-        "- Output MUST remain valid SRT for the provided block.\n"
+        "- Keep line breaks within each block.\n"
     )
     payload = {
         "model": model,
