@@ -176,6 +176,50 @@ def parse_blocks_by_pattern(text: str) -> Tuple[List[Block], List[str]]:
 
 
 # --- Validation --------------------------------------------------------------
+def _scan_raw_lines(lines: List[str]) -> List[str]:
+    """
+    Raw line-by-line sweep catching:
+    - more than one consecutive blank line
+    - text appearing after a blank line where a block index was expected
+      (indicates a blank line accidentally inserted inside a subtitle block)
+    """
+    issues: List[str] = []
+    blank_run = 0
+    prev_nonempty_ln = None
+    state = "expect_index"
+    for i, raw in enumerate(lines, start=1):
+        stripped = raw.strip()
+        if stripped == "":
+            blank_run += 1
+            if state == "in_text":
+                state = "after_blank"
+        else:
+            if blank_run > 1 and prev_nonempty_ln is not None:
+                issues.append(
+                    f"Between lines {prev_nonempty_ln} and {i}: Found {blank_run} consecutive blank lines (use exactly one)."
+                )
+            blank_run = 0
+            prev_nonempty_ln = i
+
+            if state == "expect_index":
+                if INDEX_RE.match(stripped):
+                    state = "expect_timestamp"
+            elif state == "expect_timestamp":
+                if TS_PARSE_RE.match(stripped):
+                    state = "in_text"
+            elif state == "in_text":
+                pass  # another text line, stay in state
+            elif state == "after_blank":
+                if INDEX_RE.match(stripped):
+                    state = "expect_timestamp"
+                else:
+                    issues.append(
+                        f"Line {i}: Text after blank line where a block index was expected — possible blank line inside a subtitle block."
+                    )
+                    state = "in_text"
+    return issues
+
+
 def validate_srt(text: str) -> List[str]:
     """
     Validate SRT structure and spacing. (No index ordering checks.)
@@ -224,20 +268,7 @@ def validate_srt(text: str) -> List[str]:
         prev_end_text = f"{m['eh']}:{m['em']}:{m['es']},{m['ems']}"
         prev_ts_ln = b.ts_ln
 
-    # Raw sweep to catch >1 blank line sequences anywhere
-    lines = text.splitlines()
-    blank_run = 0
-    prev_nonempty_ln = None
-    for i, raw in enumerate(lines, start=1):
-        if raw.strip() == "":
-            blank_run += 1
-        else:
-            if blank_run > 1 and prev_nonempty_ln is not None:
-                issues.append(
-                    f"Between lines {prev_nonempty_ln} and {i}: Found {blank_run} consecutive blank lines (use exactly one)."
-                )
-            blank_run = 0
-            prev_nonempty_ln = i
+    issues.extend(_scan_raw_lines(text.splitlines()))
 
     if not issues:
         logger.info("Validation passed: no issues found.")
