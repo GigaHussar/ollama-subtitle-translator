@@ -6,6 +6,7 @@ from typing import List
 
 from ollama_client import ollama_translate, start_ollama
 from srt_split_and_merge import read_srt_blocks, chunk_blocks, ensure_dir, existing_chunk_count, merge_chunks_if_complete, CHUNK_SIZE
+from prepare_for_translation import prepare_chunk, check_block_count, rebuild_chunk, retry_chunk
 
 # =========================
 # Logging config
@@ -48,17 +49,25 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
     # Translate remaining chunks
     for idx in range(start_idx, total_chunks):
         piece_blocks = chunked[idx]
-        piece_text = "\n\n".join(piece_blocks).strip()
+        text_to_translate, metadata = prepare_chunk(piece_blocks)
 
-        # Helpful log preview
-        preview = piece_text[:120].replace("\n", " ")
-        logger.info("Translating chunk %d/%d. Preview: %s...", idx + 1, total_chunks, preview + ("..." if len(piece_text) > 120 else ""))
+        preview = text_to_translate[:120].replace("\n", " ")
+        logger.info("Translating chunk %d/%d. Preview: %s", idx + 1, total_chunks, preview)
 
-        translated = ollama_translate(model, piece_text, src_lang, tgt_lang)
+        translated = ollama_translate(model, text_to_translate, src_lang, tgt_lang)
+
+        parts = [p.strip() for p in translated.strip().split("\n\n") if p.strip()]
+        error = check_block_count(parts, metadata)
+        if error:
+            logger.warning("Chunk %d: %s", idx + 1, error)
+            translated = retry_chunk(text_to_translate, translated)
+            parts = [p.strip() for p in translated.strip().split("\n\n") if p.strip()]
+
+        chunk_srt = rebuild_chunk(translated, metadata)
 
         # Write chunk file as zero-padded index
         chunk_file = chunk_dir / f"{idx:06d}.srt"
-        chunk_file.write_text(translated.strip() + "\n", encoding="utf-8")
+        chunk_file.write_text(chunk_srt, encoding="utf-8")
         logger.info("Wrote %s (%d bytes).", chunk_file.name, chunk_file.stat().st_size)
 
     # Attempt merge (only if all chunks are present)
