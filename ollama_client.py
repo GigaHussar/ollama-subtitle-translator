@@ -75,7 +75,6 @@ def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) 
 
     system_instructions = (
         f"{lang_line}\n"
-        "- Preserve original numbering and timecodes exactly.\n"
         "- Preserve tags <i>.\n"
         "- Translate only the spoken text, keep line breaks.\n"
         "- Output MUST remain valid SRT for the provided block.\n"

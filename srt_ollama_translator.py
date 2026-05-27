@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 from typing import List
 
-from srt_tools import validate_chunk, get_last_end_ms
 from ollama_client import ollama_translate, start_ollama
 from srt_split_and_merge import read_srt_blocks, chunk_blocks, ensure_dir, existing_chunk_count, merge_chunks_if_complete, CHUNK_SIZE
 
@@ -17,15 +16,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("srt-translator")
-
-# =========================
-# Chunk retry
-# =========================
-def _retry_chunk(original_text: str, translated: str) -> str:
-    # TODO: re-send original_text to LLM and return new translation
-    logger.warning("Retry not yet implemented — keeping current translation.")
-    return translated
-
 
 # =========================
 # Main processing
@@ -65,17 +55,6 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
         logger.info("Translating chunk %d/%d. Preview: %s...", idx + 1, total_chunks, preview + ("..." if len(piece_text) > 120 else ""))
 
         translated = ollama_translate(model, piece_text, src_lang, tgt_lang)
-
-        prev_end_ms = None
-        if idx > 0:
-            prev_chunk_file = chunk_dir / f"{idx - 1:06d}.srt"
-            prev_end_ms = get_last_end_ms(prev_chunk_file.read_text(encoding="utf-8"))
-
-        translated, issues = validate_chunk(translated, prev_end_ms)
-        if issues:
-            for issue in issues:
-                logger.warning("Chunk %d timecode issue: %s", idx + 1, issue)
-            translated = _retry_chunk(piece_text, translated)
 
         # Write chunk file as zero-padded index
         chunk_file = chunk_dir / f"{idx:06d}.srt"
