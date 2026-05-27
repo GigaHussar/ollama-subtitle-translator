@@ -51,7 +51,7 @@ def _validate_chunk(translated: str, chunk_num: int, prev_end_ms: int = None) ->
 # =========================
 # Main processing
 # =========================
-def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_lang: str):
+def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_lang: str, chunk_size: int = CHUNK_SIZE):
     logger.info("Input:  %s", input_srt)
     logger.info("Output: %s", output_srt)
     chunk_dir = output_srt.with_suffix("")  # drop .srt
@@ -63,9 +63,9 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
     # Read source SRT
     srt_text = input_srt.read_text(encoding="utf-8")
     blocks = read_srt_blocks(srt_text)
-    chunked = chunk_blocks(blocks, CHUNK_SIZE)
+    chunked = chunk_blocks(blocks, chunk_size)
     total_chunks = len(chunked)
-    logger.info("Total chunks: %d (chunk size = %d)", total_chunks, CHUNK_SIZE)
+    logger.info("Total chunks: %d (chunk size = %d)", total_chunks, chunk_size)
 
     # Ensure Ollama is up
     start_ollama()
@@ -116,6 +116,8 @@ def main(argv: List[str]):
                         help='Source language name (e.g., "English", "fr", "日本語", or "auto" to detect)')
     parser.add_argument("--to-lang", default="Polish",
                         help='Target language name (e.g., "Polish", "pl", "Español", "Русский")')
+    parser.add_argument("--chunk-size", type=int, default=CHUNK_SIZE,
+                        help=f"Number of subtitle blocks per translation chunk (default: {CHUNK_SIZE}, tested with 10)")
 
     args = parser.parse_args(argv[1:])
 
@@ -124,7 +126,7 @@ def main(argv: List[str]):
         sys.exit(2)
 
     try:
-        process(args.input, args.output, args.model, args.from_lang, args.to_lang)
+        process(args.input, args.output, args.model, args.from_lang, args.to_lang, args.chunk_size)
     except Exception as e:
         logger.exception("Fatal error: %s", e)
         sys.exit(3)

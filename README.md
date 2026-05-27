@@ -58,8 +58,11 @@ Example:
 python srt_ollama_translator.py movie.srt movie_pl.srt llama3 --from-lang auto --to-lang Polish
 ```
 
-This will: - Split `movie.srt` into chunks - Translate each chunk with
-`llama3` - Resume if interrupted - Merge into `movie_pl.srt`
+This will split `movie.srt` into chunks, translate each one, validate and fix each chunk, resume if interrupted, and merge into `movie_pl.srt`.
+
+Optional arguments:
+
+- `--chunk-size N` — number of subtitle blocks per chunk (default: 10, tested with 10)
 
 ------------------------------------------------------------------------
 
