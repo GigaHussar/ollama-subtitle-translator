@@ -1,16 +1,12 @@
-import os
 import sys
 import re
-import time
-import json
 import logging
-import platform
-import subprocess
-from pathlib import Path
-from typing import List, Iterable
-import requests
 import argparse
+from pathlib import Path
+from typing import List
+
 from srt_tools import validate_srt, get_last_end_ms, get_first_start_ms, normalize_spacing_and_separators
+from ollama_client import ollama_translate, start_ollama
 
 # =========================
 # Logging config
@@ -25,137 +21,7 @@ logger = logging.getLogger("srt-translator")
 # =========================
 # Constants
 # =========================
-OLLAMA_URL = "http://127.0.0.1:11434"
-GEN_ENDPOINT = f"{OLLAMA_URL}/api/generate"
-TAGS_ENDPOINT = f"{OLLAMA_URL}/api/tags"
-
-CHUNK_SIZE = 10                # 10 subtitles per piece
-REQ_TIMEOUT_SECONDS = 300      # 5 minutes timeout for translation request
-RESTART_WAIT_SECONDS = 60      # wait 1 minute after restart
-SERVE_BOOT_WAIT_SECONDS = 5    # small wait after `ollama serve`
-MAX_RETRIES = 3                # retry translation per chunk
-
-# =========================
-# Ollama helpers
-# =========================
-def is_ollama_running() -> bool:
-    """Quick health check by pinging /api/tags."""
-    try:
-        logger.debug("Probing Ollama /api/tags ...")
-        r = requests.get(TAGS_ENDPOINT, timeout=2)
-        ok = r.status_code == 200
-        logger.debug("Ollama probe status: %s", ok)
-        return ok
-    except Exception:
-        return False
-
-def start_ollama():
-    """Start Ollama daemon if not already running."""
-    if is_ollama_running():
-        logger.info("Ollama is already running.")
-        return
-    logger.warning("Ollama not running—starting `ollama serve`...")
-    # Start detached; suppress output
-    subprocess.Popen(
-        ["ollama", "serve"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True
-    )
-    time.sleep(SERVE_BOOT_WAIT_SECONDS)
-    if is_ollama_running():
-        logger.info("Ollama started successfully.")
-    else:
-        logger.warning("Ollama may still be starting... continuing with retries later.")
-
-def kill_ollama():
-    """Attempt to terminate Ollama process cross-platform."""
-    sysname = platform.system().lower()
-    logger.warning("Attempting to stop Ollama (platform: %s)...", sysname)
-    try:
-        if "windows" in sysname:
-            # /T to kill child processes, /F to force
-            subprocess.run(["taskkill", "/IM", "ollama.exe", "/F", "/T"], check=False)
-        else:
-            # pkill if available; ignore failure if it's not found
-            subprocess.run(["pkill", "-f", "ollama"], check=False)
-    except Exception as e:
-        logger.error("Error trying to stop Ollama: %s", e)
-
-def restart_ollama():
-    kill_ollama()
-    logger.info("Waiting %s seconds before restart...", RESTART_WAIT_SECONDS)
-    time.sleep(RESTART_WAIT_SECONDS)
-    start_ollama()
-
-def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) -> str:
-    """
-    Translate a block of SRT (multiple subtitles) using Ollama.
-    Preserves numbering and timecodes.
-    """
-    if src_lang.lower() == "auto":
-        lang_line = f"Detect the source language and translate to {tgt_lang}."
-    else:
-        lang_line = f"Translate the SRT subtitles from {src_lang} to {tgt_lang}."
-
-    system_instructions = (
-        f"{lang_line}\n"
-        "- Preserve original numbering and timecodes exactly.\n"
-        "- Preserve tags <i>.\n"
-        "- Translate only the spoken text, keep line breaks.\n"
-        "- Output MUST remain valid SRT for the provided block.\n"
-    )
-    payload = {
-        "model": model,
-        "prompt": f"{system_instructions}\n\n{block_text.strip()}\n",
-        # Optional: make output deterministic-ish
-        "options": {"temperature": 0.2},
-        "stream": True,
-    }
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        logger.info("Requesting translation (attempt %d/%d)...", attempt, MAX_RETRIES)
-        try:
-            with requests.post(
-                GEN_ENDPOINT,
-                json=payload,
-                stream=True,
-                timeout=REQ_TIMEOUT_SECONDS,
-            ) as resp:
-                resp.raise_for_status()
-                parts: List[str] = []
-                for raw in resp.iter_lines(decode_unicode=True):
-                    if not raw:
-                        continue
-                    # Each line is JSON like: {"model":"...","created_at":"...","response":"...","done":false}
-                    try:
-                        obj = json.loads(raw)
-                        if "response" in obj:
-                            parts.append(obj["response"])
-                        if obj.get("done"):
-                            break
-                    except json.JSONDecodeError:
-                        # Sometimes a transport artifact; log and continue
-                        logger.debug("Non-JSON line from stream: %r", raw)
-                text = "".join(parts).strip()
-                if text:
-                    logger.info("Received translated chunk (%d chars).", len(text))
-                    text = re.sub(r"\s*-->\s*", " --> ", text)
-                    logger.info("Fixed arrow spacing in timecodes.")
-                    return text
-                else:
-                    logger.warning("Empty translation received.")
-                    raise RuntimeError("Empty translation.")
-        except requests.exceptions.Timeout:
-            logger.error("Translation timed out after %s seconds.", REQ_TIMEOUT_SECONDS)
-            logger.info("Restarting Ollama due to timeout...")
-            restart_ollama()
-        except Exception as e:
-            logger.error("Translation error: %s", e)
-            logger.info("Restarting Ollama and retrying...")
-            restart_ollama()
-
-    raise RuntimeError("Failed to translate chunk after multiple attempts.")
+CHUNK_SIZE = 10
 
 # =========================
 # Chunk validation
