@@ -9,10 +9,6 @@ def strip_italics(text: str) -> str:
     return _ITALICS_TAG_RE.sub("", text)
 
 
-def retry_chunk(original_text: str, translated: str) -> str:
-    # TODO: re-send original_text to LLM and return new translation
-    return translated
-
 
 def prepare_chunk(blocks: List[str]) -> Tuple[str, List[Tuple[str, str]]]:
     """

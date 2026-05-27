@@ -6,7 +6,7 @@ from typing import List
 
 from ollama_client import ollama_translate, start_ollama
 from srt_split_and_merge import read_srt_blocks, chunk_blocks, ensure_dir, existing_chunk_count, merge_chunks_if_complete, CHUNK_SIZE
-from prepare_for_translation import prepare_chunk, check_block_count, rebuild_chunk, retry_chunk
+from prepare_for_translation import prepare_chunk, check_block_count, rebuild_chunk
 
 # =========================
 # Logging config
@@ -19,58 +19,61 @@ logging.basicConfig(
 logger = logging.getLogger("srt-translator")
 
 # =========================
+# Per-chunk processing
+# =========================
+def translate_chunk(idx: int, total_chunks: int, piece_blocks: List[str], chunk_dir: Path, model: str, src_lang: str, tgt_lang: str):
+    text_to_translate, metadata = prepare_chunk(piece_blocks)
+
+    preview = text_to_translate[:120].replace("\n", " ")
+    logger.info("Translating chunk %d/%d. Preview: %s", idx + 1, total_chunks, preview)
+
+    translated = ollama_translate(model, text_to_translate, src_lang, tgt_lang)
+
+    for attempt in range(1, 4):
+        error = check_block_count(translated, metadata)
+        if not error:
+            break
+        logger.warning("Chunk %d attempt %d: %s — retrying.", idx + 1, attempt, error)
+        translated = ollama_translate(model, text_to_translate, src_lang, tgt_lang)
+    else:
+        raise RuntimeError(f"Chunk {idx + 1}: {error}")
+
+    chunk_srt = rebuild_chunk(translated, metadata)
+
+    chunk_file = chunk_dir / f"{idx:06d}.srt"
+    chunk_file.write_text(chunk_srt, encoding="utf-8")
+    logger.info("Wrote %s (%d bytes).", chunk_file.name, chunk_file.stat().st_size)
+
+
+# =========================
 # Main processing
 # =========================
 def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_lang: str, chunk_size: int = CHUNK_SIZE):
     logger.info("Input:  %s", input_srt)
     logger.info("Output: %s", output_srt)
-    chunk_dir = output_srt.with_suffix("")  # drop .srt
-    # folder like /path/to/output (without .srt)
-    chunk_dir = Path(str(chunk_dir) + "_chunks")
+    chunk_dir = Path(str(output_srt.with_suffix("")) + "_chunks")
     ensure_dir(chunk_dir)
     logger.info("Chunk folder: %s", chunk_dir)
 
-    # Read source SRT
+    # Split source SRT into chunks
     srt_text = input_srt.read_text(encoding="utf-8")
     blocks = read_srt_blocks(srt_text)
     chunked = chunk_blocks(blocks, chunk_size)
     total_chunks = len(chunked)
     logger.info("Total chunks: %d (chunk size = %d)", total_chunks, chunk_size)
 
-    # Ensure Ollama is up
+    # Ensure Ollama is running
     start_ollama()
 
-    # Determine resume index from number of existing chunk files
-    start_idx = existing_chunk_count(chunk_dir)
-    if start_idx > total_chunks:
-        start_idx = total_chunks
+    # Resume from last completed chunk if previous run was interrupted
+    start_idx = min(existing_chunk_count(chunk_dir), total_chunks)
     logger.info("Resuming at chunk index: %d (0-based).", start_idx)
 
-    # Translate remaining chunks
+    # Translate each chunk and write to disk
     for idx in range(start_idx, total_chunks):
-        piece_blocks = chunked[idx]
-        text_to_translate, metadata = prepare_chunk(piece_blocks)
+        translate_chunk(idx, total_chunks, chunked[idx], chunk_dir, model, src_lang, tgt_lang)
 
-        preview = text_to_translate[:120].replace("\n", " ")
-        logger.info("Translating chunk %d/%d. Preview: %s", idx + 1, total_chunks, preview)
-
-        translated = ollama_translate(model, text_to_translate, src_lang, tgt_lang)
-
-        parts = [p.strip() for p in translated.strip().split("\n\n") if p.strip()]
-        error = check_block_count(parts, metadata)
-        if error:
-            logger.warning("Chunk %d: %s", idx + 1, error)
-            translated = retry_chunk(text_to_translate, translated)
-            parts = [p.strip() for p in translated.strip().split("\n\n") if p.strip()]
-
-        chunk_srt = rebuild_chunk(translated, metadata)
-
-        # Write chunk file as zero-padded index
-        chunk_file = chunk_dir / f"{idx:06d}.srt"
-        chunk_file.write_text(chunk_srt, encoding="utf-8")
-        logger.info("Wrote %s (%d bytes).", chunk_file.name, chunk_file.stat().st_size)
-
-    # Attempt merge (only if all chunks are present)
+    # Combine all chunk files into the final output
     merge_chunks_if_complete(chunk_dir, total_chunks, output_srt)
     logger.info("Done.")
 
