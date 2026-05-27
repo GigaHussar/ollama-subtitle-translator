@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import List
 
-from srt_tools import validate_srt, get_last_end_ms, get_first_start_ms, normalize_spacing_and_separators, fix_arrow_spacing
+from srt_tools import validate_chunk, get_last_end_ms, fix_arrow_spacing
 from ollama_client import ollama_translate, start_ollama
 from srt_split_and_merge import read_srt_blocks, chunk_blocks, ensure_dir, existing_chunk_count, merge_chunks_if_complete, CHUNK_SIZE
 
@@ -19,32 +19,11 @@ logging.basicConfig(
 logger = logging.getLogger("srt-translator")
 
 # =========================
-# Chunk validation
+# Chunk retry
 # =========================
 def _retry_chunk(original_text: str, translated: str) -> str:
     # TODO: re-send original_text to LLM and return new translation
     logger.warning("Retry not yet implemented — keeping current translation.")
-    return translated
-
-
-def _validate_chunk(translated: str, chunk_num: int, prev_end_ms: int = None) -> str:
-    translated = normalize_spacing_and_separators(translated)
-    issues = validate_srt(translated)
-    timecode_issues = [i for i in issues if any(k in i for k in (
-        "Invalid timestamp", "Start time must be less than", "overlaps"
-    ))]
-
-    if prev_end_ms is not None:
-        first_start_ms = get_first_start_ms(translated)
-        if first_start_ms is not None and first_start_ms < prev_end_ms:
-            timecode_issues.append(
-                f"First timestamp of chunk {chunk_num} overlaps last timestamp of previous chunk."
-            )
-
-    if timecode_issues:
-        for issue in timecode_issues:
-            logger.warning("Chunk %d timecode issue: %s", chunk_num, issue)
-        return _retry_chunk(translated, translated)
     return translated
 
 
@@ -93,7 +72,11 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
             prev_chunk_file = chunk_dir / f"{idx - 1:06d}.srt"
             prev_end_ms = get_last_end_ms(prev_chunk_file.read_text(encoding="utf-8"))
 
-        translated = _validate_chunk(translated, idx + 1, prev_end_ms)
+        translated, issues = validate_chunk(translated, prev_end_ms)
+        if issues:
+            for issue in issues:
+                logger.warning("Chunk %d timecode issue: %s", idx + 1, issue)
+            translated = _retry_chunk(piece_text, translated)
 
         # Write chunk file as zero-padded index
         chunk_file = chunk_dir / f"{idx:06d}.srt"

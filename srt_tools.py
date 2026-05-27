@@ -294,4 +294,19 @@ def get_first_start_ms(text: str) -> Optional[int]:
     return None
 
 
+def validate_chunk(translated: str, prev_end_ms: Optional[int] = None) -> Tuple[str, List[str]]:
+    translated = normalize_spacing_and_separators(translated)
+    issues = validate_srt(translated)
+    timecode_issues = [i for i in issues if any(k in i for k in (
+        "Invalid timestamp", "Start time must be less than", "overlaps"
+    ))]
+
+    if prev_end_ms is not None:
+        first_start_ms = get_first_start_ms(translated)
+        if first_start_ms is not None and first_start_ms < prev_end_ms:
+            timecode_issues.append("First timestamp overlaps last timestamp of previous chunk.")
+
+    return translated, timecode_issues
+
+
 
