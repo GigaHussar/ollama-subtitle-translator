@@ -276,6 +276,24 @@ def strip_italics(text: str) -> str:
     return ITALICS_TAG_RE.sub("", text)
 
 
+def get_last_end_ms(text: str) -> Optional[int]:
+    blocks, _ = parse_blocks_by_pattern(text)
+    for b in reversed(blocks):
+        m = TS_PARSE_RE.match(b.ts_text)
+        if m:
+            return hms_to_ms(int(m["eh"]), int(m["em"]), int(m["es"]), int(m["ems"]))
+    return None
+
+
+def get_first_start_ms(text: str) -> Optional[int]:
+    blocks, _ = parse_blocks_by_pattern(text)
+    for b in blocks:
+        m = TS_PARSE_RE.match(b.ts_text)
+        if m:
+            return hms_to_ms(int(m["sh"]), int(m["sm"]), int(m["ss"]), int(m["sms"]))
+    return None
+
+
 # --- CLI --------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Validate and clean .srt files.")

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Iterable
 import requests
 import argparse
-from srt_tools import validate_srt
+from srt_tools import validate_srt, get_last_end_ms, get_first_start_ms
 
 # =========================
 # Logging config
@@ -166,11 +166,19 @@ def _retry_chunk(original_text: str, translated: str) -> str:
     return translated
 
 
-def _validate_chunk(translated: str, chunk_num: int) -> str:
+def _validate_chunk(translated: str, chunk_num: int, prev_end_ms: int = None) -> str:
     issues = validate_srt(translated)
     timecode_issues = [i for i in issues if any(k in i for k in (
         "Invalid timestamp", "Start time must be less than", "overlaps"
     ))]
+
+    if prev_end_ms is not None:
+        first_start_ms = get_first_start_ms(translated)
+        if first_start_ms is not None and first_start_ms < prev_end_ms:
+            timecode_issues.append(
+                f"First timestamp of chunk {chunk_num} overlaps last timestamp of previous chunk."
+            )
+
     if timecode_issues:
         for issue in timecode_issues:
             logger.warning("Chunk %d timecode issue: %s", chunk_num, issue)
@@ -268,7 +276,13 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
         logger.info("Translating chunk %d/%d. Preview: %s...", idx + 1, total_chunks, preview + ("..." if len(piece_text) > 120 else ""))
 
         translated = ollama_translate(model, piece_text, src_lang, tgt_lang)
-        translated = _validate_chunk(translated, idx + 1)
+
+        prev_end_ms = None
+        if idx > 0:
+            prev_chunk_file = chunk_dir / f"{idx - 1:06d}.srt"
+            prev_end_ms = get_last_end_ms(prev_chunk_file.read_text(encoding="utf-8"))
+
+        translated = _validate_chunk(translated, idx + 1, prev_end_ms)
 
         # Write chunk file as zero-padded index
         chunk_file = chunk_dir / f"{idx:06d}.srt"
