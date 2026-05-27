@@ -89,7 +89,7 @@ def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) 
     }
 
     for attempt in range(1, MAX_RETRIES + 1):
-        logger.info("Requesting translation (attempt %d/%d)...", attempt, MAX_RETRIES)
+        logger.info("Requesting translation...")
         try:
             with requests.post(
                 GEN_ENDPOINT,
@@ -111,12 +111,8 @@ def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) 
                     except json.JSONDecodeError:
                         logger.debug("Non-JSON line from stream: %r", raw)
                 text = "".join(parts).strip()
-                if text:
-                    logger.info("Received translated chunk (%d chars).", len(text))
-                    return text
-                else:
-                    logger.warning("Empty translation received.")
-                    raise RuntimeError("Empty translation.")
+                logger.info("Received translated chunk (%d chars).", len(text))
+                return text
         except requests.exceptions.Timeout:
             logger.error("Translation timed out after %s seconds.", REQ_TIMEOUT_SECONDS)
             logger.info("Restarting Ollama due to timeout...")

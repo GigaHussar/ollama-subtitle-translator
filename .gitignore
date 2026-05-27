@@ -1,2 +1,3 @@
 session_*.txt
 vision.txt
+__pycache__/
