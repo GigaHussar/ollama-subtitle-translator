@@ -158,6 +158,27 @@ def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) 
     raise RuntimeError("Failed to translate chunk after multiple attempts.")
 
 # =========================
+# Chunk validation
+# =========================
+def _retry_chunk(original_text: str, translated: str) -> str:
+    # TODO: re-send original_text to LLM and return new translation
+    logger.warning("Retry not yet implemented — keeping current translation.")
+    return translated
+
+
+def _validate_chunk(translated: str, chunk_num: int) -> str:
+    issues = validate_srt(translated)
+    timecode_issues = [i for i in issues if any(k in i for k in (
+        "Invalid timestamp", "Start time must be less than", "overlaps"
+    ))]
+    if timecode_issues:
+        for issue in timecode_issues:
+            logger.warning("Chunk %d timecode issue: %s", chunk_num, issue)
+        return _retry_chunk(translated, translated)
+    return translated
+
+
+# =========================
 # SRT splitting/merging
 # =========================
 def read_srt_blocks(srt_text: str) -> List[str]:
@@ -247,6 +268,7 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
         logger.info("Translating chunk %d/%d. Preview: %s...", idx + 1, total_chunks, preview + ("..." if len(piece_text) > 120 else ""))
 
         translated = ollama_translate(model, piece_text, src_lang, tgt_lang)
+        translated = _validate_chunk(translated, idx + 1)
 
         # Write chunk file as zero-padded index
         chunk_file = chunk_dir / f"{idx:06d}.srt"
