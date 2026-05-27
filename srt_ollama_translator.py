@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import List
 
-from srt_tools import validate_chunk, get_last_end_ms, fix_arrow_spacing
+from srt_tools import validate_chunk, get_last_end_ms
 from ollama_client import ollama_translate, start_ollama
 from srt_split_and_merge import read_srt_blocks, chunk_blocks, ensure_dir, existing_chunk_count, merge_chunks_if_complete, CHUNK_SIZE
 
@@ -65,7 +65,6 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
         logger.info("Translating chunk %d/%d. Preview: %s...", idx + 1, total_chunks, preview + ("..." if len(piece_text) > 120 else ""))
 
         translated = ollama_translate(model, piece_text, src_lang, tgt_lang)
-        translated = fix_arrow_spacing(translated)
 
         prev_end_ms = None
         if idx > 0:

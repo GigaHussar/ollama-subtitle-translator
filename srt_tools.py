@@ -37,6 +37,10 @@ def fix_arrow_spacing(text: str) -> str:
     return ARROW_RE.sub(" --> ", text)
 
 
+def fix_dot_in_timecodes(text: str) -> str:
+    return re.sub(r"(\d{2}:\d{2}:\d{2})\.(\d{3})", r"\1,\2", text)
+
+
 def hms_to_ms(h: int, m: int, s: int, ms: int) -> int:
     return ((h * 60 + m) * 60 + s) * 1000 + ms
 
@@ -295,6 +299,8 @@ def get_first_start_ms(text: str) -> Optional[int]:
 
 
 def validate_chunk(translated: str, prev_end_ms: Optional[int] = None) -> Tuple[str, List[str]]:
+    translated = fix_arrow_spacing(translated)
+    translated = fix_dot_in_timecodes(translated)
     translated = normalize_spacing_and_separators(translated)
     issues = validate_srt(translated)
     timecode_issues = [i for i in issues if any(k in i for k in (
