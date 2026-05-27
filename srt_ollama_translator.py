@@ -1,12 +1,12 @@
 import sys
-import re
 import logging
 import argparse
 from pathlib import Path
 from typing import List
 
-from srt_tools import validate_srt, get_last_end_ms, get_first_start_ms, normalize_spacing_and_separators
+from srt_tools import validate_srt, get_last_end_ms, get_first_start_ms, normalize_spacing_and_separators, fix_arrow_spacing
 from ollama_client import ollama_translate, start_ollama
+from srt_split_and_merge import read_srt_blocks, chunk_blocks, ensure_dir, existing_chunk_count, merge_chunks_if_complete, CHUNK_SIZE
 
 # =========================
 # Logging config
@@ -17,11 +17,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("srt-translator")
-
-# =========================
-# Constants
-# =========================
-CHUNK_SIZE = 10
 
 # =========================
 # Chunk validation
@@ -52,58 +47,6 @@ def _validate_chunk(translated: str, chunk_num: int, prev_end_ms: int = None) ->
         return _retry_chunk(translated, translated)
     return translated
 
-
-# =========================
-# SRT splitting/merging
-# =========================
-def read_srt_blocks(srt_text: str) -> List[str]:
-    """
-    Split an SRT file into blocks separated by blank lines.
-    Returns a list where each entry is one subtitle block (index+time+text).
-    """
-    # Normalize newlines to \n, then split on blank lines
-    normalized = srt_text.replace("\r\n", "\n").replace("\r", "\n")
-    # Split on two or more newlines (with optional whitespace)
-    blocks = [b.strip() for b in re.split(r"\n\s*\n", normalized) if b.strip()]
-    logger.info("Detected %d subtitle blocks.", len(blocks))
-    return blocks
-
-def chunk_blocks(blocks: List[str], chunk_size: int = CHUNK_SIZE) -> List[List[str]]:
-    """Group blocks into chunk lists of given size."""
-    return [blocks[i:i + chunk_size] for i in range(0, len(blocks), chunk_size)]
-
-def ensure_dir(p: Path):
-    p.mkdir(parents=True, exist_ok=True)
-
-def existing_chunk_count(chunk_dir: Path) -> int:
-    """Count existing chunk files like 000000.srt, 000001.srt ..."""
-    if not chunk_dir.exists():
-        return 0
-    count = sum(1 for f in chunk_dir.iterdir() if f.is_file() and f.suffix == ".srt")
-    return count
-
-def merge_chunks_if_complete(chunk_dir: Path, total_chunks: int, out_path: Path):
-    """
-    If we have all chunk files, merge them into the final SRT.
-    We assume each chunk preserves original numbering/timecodes, so simple concatenation with blank lines is fine.
-    """
-    files = sorted(chunk_dir.glob("*.srt"))
-    if len(files) != total_chunks:
-        logger.info("Merge skipped: %d/%d chunks present.", len(files), total_chunks)
-        return
-
-    logger.info("All %d chunks present—merging into %s", total_chunks, out_path)
-    with out_path.open("w", encoding="utf-8") as out:
-        first = True
-        for f in files:
-            content = f.read_text(encoding="utf-8").strip()
-            if not content:
-                logger.warning("Chunk %s is empty—merge may be invalid.", f.name)
-            if not first:
-                out.write("\n\n")  # separator between chunks
-            out.write(content)
-            first = False
-    logger.info("Merge complete.")
 
 # =========================
 # Main processing
@@ -143,6 +86,7 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
         logger.info("Translating chunk %d/%d. Preview: %s...", idx + 1, total_chunks, preview + ("..." if len(piece_text) > 120 else ""))
 
         translated = ollama_translate(model, piece_text, src_lang, tgt_lang)
+        translated = fix_arrow_spacing(translated)
 
         prev_end_ms = None
         if idx > 0:

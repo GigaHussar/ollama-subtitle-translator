@@ -33,6 +33,10 @@ def is_valid_timecode(tc: str) -> bool:
 
 
 # --- Helpers -----------------------------------------------------------------
+def fix_arrow_spacing(text: str) -> str:
+    return ARROW_RE.sub(" --> ", text)
+
+
 def hms_to_ms(h: int, m: int, s: int, ms: int) -> int:
     return ((h * 60 + m) * 60 + s) * 1000 + ms
 

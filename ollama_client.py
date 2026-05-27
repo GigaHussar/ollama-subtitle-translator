@@ -1,4 +1,3 @@
-import re
 import time
 import json
 import logging
@@ -113,8 +112,6 @@ def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) 
                 text = "".join(parts).strip()
                 if text:
                     logger.info("Received translated chunk (%d chars).", len(text))
-                    text = re.sub(r"\s*-->\s*", " --> ", text)
-                    logger.info("Fixed arrow spacing in timecodes.")
                     return text
                 else:
                     logger.warning("Empty translation received.")
