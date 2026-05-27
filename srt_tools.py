@@ -17,7 +17,6 @@ validate:
       * more than one blank line between blocks.
 fix:
   - Preserves original indices (no resequencing).
-  - Normalizes timestamp arrow spacing to " --> ".
   - Removes blank line(s) immediately after a timestamp.
   - Writes **exactly one** blank line between blocks.
 strip-italics:
