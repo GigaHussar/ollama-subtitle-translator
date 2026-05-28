@@ -176,7 +176,7 @@ def main(argv: List[str]):
 
     if args.backend == "ollama":
         translate_fn = ollama_translate
-        start_fn = start_ollama
+        start_fn = lambda: start_ollama(args.model)
     else:
         translate_fn = lmstudio_translate
         start_fn = lambda: start_lmstudio(args.model)

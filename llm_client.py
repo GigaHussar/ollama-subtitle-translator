@@ -11,8 +11,9 @@ import requests
 logger = logging.getLogger("srt-translator")
 
 REQ_TIMEOUT_SECONDS = 300
-RESTART_WAIT_SECONDS = 60
+RESTART_WAIT_SECONDS = 90
 SERVE_BOOT_WAIT_SECONDS = 5
+MODEL_LOAD_TIMEOUT_SECONDS = 120
 MAX_RETRIES = 3
 
 OLLAMA_URL = "http://127.0.0.1:11434"
@@ -51,28 +52,42 @@ def is_ollama_running() -> bool:
         return False
 
 
-def start_ollama() -> None:
+def _is_ollama_model_available(model: str) -> bool:
+    try:
+        r = requests.get(OLLAMA_TAGS_ENDPOINT, timeout=2)
+        if r.status_code != 200:
+            return False
+        return any(m.get("name") == model for m in r.json().get("models", []))
+    except Exception:
+        return False
+
+
+def start_ollama(model: str) -> None:
     if shutil.which("ollama") is None:
         raise RuntimeError(
             "Ollama not found in PATH. Install Ollama and make sure `ollama` is available in your terminal."
         )
-    if is_ollama_running():
-        logger.info("Ollama is already running.")
-        return
-    logger.warning("Ollama not running — starting `ollama serve`...")
-    subprocess.Popen(
-        ["ollama", "serve"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    time.sleep(SERVE_BOOT_WAIT_SECONDS)
-    if is_ollama_running():
-        logger.info("Ollama started successfully.")
-    else:
-        raise RuntimeError(
-            "Ollama did not start. Try running `ollama serve` manually and check for errors."
+    if not is_ollama_running():
+        logger.warning("Ollama not running — starting `ollama serve`...")
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
+        time.sleep(SERVE_BOOT_WAIT_SECONDS)
+        if not is_ollama_running():
+            raise RuntimeError(
+                "Ollama did not start. Try running `ollama serve` manually and check for errors."
+            )
+    else:
+        logger.info("Ollama is already running.")
+    if not _is_ollama_model_available(model):
+        raise RuntimeError(
+            f"Model '{model}' is not available in Ollama. "
+            "Run `ollama pull <model>` to download it first."
+        )
+    logger.info("Model %s is available.", model)
 
 
 def _kill_ollama() -> None:
@@ -87,11 +102,11 @@ def _kill_ollama() -> None:
         logger.error("Error trying to stop Ollama: %s", e)
 
 
-def _restart_ollama() -> None:
+def _restart_ollama(model: str) -> None:
     _kill_ollama()
     logger.info("Waiting %s seconds before restart...", RESTART_WAIT_SECONDS)
     time.sleep(RESTART_WAIT_SECONDS)
-    start_ollama()
+    start_ollama(model)
 
 
 def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) -> str:
@@ -131,11 +146,11 @@ def ollama_translate(model: str, block_text: str, src_lang: str, tgt_lang: str) 
         except requests.exceptions.Timeout:
             logger.error("Translation timed out after %s seconds.", REQ_TIMEOUT_SECONDS)
             logger.info("Restarting Ollama due to timeout...")
-            _restart_ollama()
+            _restart_ollama(model)
         except Exception as e:
             logger.error("Translation error: %s", e)
             logger.info("Restarting Ollama and retrying...")
-            _restart_ollama()
+            _restart_ollama(model)
 
     raise RuntimeError("Failed to translate chunk after multiple attempts.")
 
@@ -187,7 +202,18 @@ def start_lmstudio(model: str) -> None:
         logger.info("Model %s is already loaded.", model)
     else:
         logger.info("Loading model %s...", model)
-        subprocess.run(["lms", "load", model, "-y"], check=False)
+        try:
+            subprocess.run(["lms", "load", model, "-y"], check=False, timeout=MODEL_LOAD_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Loading model '{model}' timed out after {MODEL_LOAD_TIMEOUT_SECONDS}s. "
+                "The model may be too large or LM Studio is unresponsive."
+            )
+        if not _is_model_loaded(model):
+            raise RuntimeError(
+                f"Failed to load model '{model}' in LM Studio. "
+                "Make sure the model name is correct and the model is downloaded in LM Studio."
+            )
 
 
 def _restart_lmstudio(model: str) -> None:
