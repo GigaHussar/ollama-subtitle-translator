@@ -5,8 +5,7 @@ Maybe my file was too big. I also couldn't use ChatGPT directly — the file was
 (about 100 at a time), after ~300 fragments ChatGPT started inventing its own story or kept retranslating the same lines.  
 
 For testing I first used **gemma3:4b**, but the output quality wasn't good.  
-Then I switched to **gemma3:12b** quantized to 4 bits (about 7GB) so it could fit on my RTX 4060.  
-With this setup, translating a 2.5-hour movie took around 3 hours.
+Then I switched to **gemma3:12b** quantized to 4 bits (about 7GB) so it could fit on my RTX 4060.
 
 # SRT Translator
 
