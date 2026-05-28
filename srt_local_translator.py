@@ -153,8 +153,8 @@ def main(argv: List[str]):
     parser = argparse.ArgumentParser(description="SRT translator with local LLM")
     parser.add_argument("input", type=Path, help="INPUT.srt")
     parser.add_argument("model", help="MODEL_NAME (e.g., mistral, llama3, qwen, etc.)")
-    parser.add_argument("--backend", choices=["ollama", "lmstudio"], default="ollama",
-                        help="LLM backend to use (default: ollama)")
+    parser.add_argument("--backend", choices=["ollama", "lmstudio"], default="lmstudio",
+                        help="LLM backend to use (default: lmstudio)")
     parser.add_argument("--output", type=Path, default=None,
                         help="OUTPUT.srt (default: same folder as input, named INPUT_translated_to_LANG.srt)")
     parser.add_argument("--from-lang", default="auto",

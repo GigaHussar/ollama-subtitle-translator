@@ -50,16 +50,16 @@ Translates `.srt` subtitle files using a local LLM. Supports [Ollama](https://ol
 python srt_local_translator.py INPUT.srt MODEL_NAME [options]
 ```
 
-Example — Ollama (default), output saved next to input as `movie_translated_to_Polish.srt`:
+Example — LM Studio (default), output saved next to input as `movie_translated_to_Polish.srt`:
 
 ``` bash
-python srt_local_translator.py movie.srt gemma3:12b
+python srt_local_translator.py movie.srt gemma-3-12b
 ```
 
-Example — LM Studio:
+Example — Ollama:
 
 ``` bash
-python srt_local_translator.py movie.srt gemma-3-12b --backend lmstudio
+python srt_local_translator.py movie.srt gemma3:12b --backend ollama
 ```
 
 Example — custom output path and target language:
@@ -70,7 +70,7 @@ python srt_local_translator.py movie.srt gemma3:12b --output movie_pl.srt --to-l
 
 Optional arguments:
 
-- `--backend`  — LLM backend to use: `ollama` (default) or `lmstudio`
+- `--backend`  — LLM backend to use: `lmstudio` (default) or `ollama`
 - `--output PATH` — output file path (default: same folder as input, named `INPUT_translated_to_LANG.srt`)
 - `--from-lang LANG` — source language (default: `auto`, detects automatically)
 - `--to-lang LANG` — target language (default: `Polish`)
