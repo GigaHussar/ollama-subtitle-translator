@@ -10,7 +10,7 @@ With this setup, translating a 2.5-hour movie took around 3 hours.
 
 # SRT Translator
 
-Translates `.srt` subtitle files using a local LLM via [Ollama](https://ollama.ai/).
+Translates `.srt` subtitle files using a local LLM. Supports [Ollama](https://ollama.ai/) and [LM Studio](https://lmstudio.ai/) as backends.
 
 ------------------------------------------------------------------------
 
@@ -33,31 +33,44 @@ Translates `.srt` subtitle files using a local LLM via [Ollama](https://ollama.a
     pip install requests
     ```
 
-2. Install and configure [Ollama](https://ollama.ai/).  
-   Make sure `ollama serve` is available in your system PATH.
+2. Install a backend:
+
+    **Ollama** — install from [ollama.ai](https://ollama.ai/) and make sure `ollama serve` is available in PATH.
+
+    **LM Studio** — install from [lmstudio.ai](https://lmstudio.ai/). Then find `lms.exe` in your installation folder and add it to PATH. On Windows it is typically located at:
+    ```
+    C:\Program Files\LM Studio\resources\app\.webpack\
+    ```
 
 ------------------------------------------------------------------------
 
 ## Usage
 
 ``` bash
-python srt_ollama_translator.py INPUT.srt MODEL_NAME [options]
+python srt_local_translator.py INPUT.srt MODEL_NAME [options]
 ```
 
-Example — minimal, output saved next to input as `movie_translated_to_Polish.srt`:
+Example — Ollama (default), output saved next to input as `movie_translated_to_Polish.srt`:
 
 ``` bash
-python srt_ollama_translator.py movie.srt gemma3:12b
+python srt_local_translator.py movie.srt gemma3:12b
+```
+
+Example — LM Studio:
+
+``` bash
+python srt_local_translator.py movie.srt gemma-3-12b --backend lmstudio
 ```
 
 Example — custom output path and target language:
 
 ``` bash
-python srt_ollama_translator.py movie.srt gemma3:12b --output movie_pl.srt --to-lang Polish
+python srt_local_translator.py movie.srt gemma3:12b --output movie_pl.srt --to-lang Polish
 ```
 
 Optional arguments:
 
+- `--backend`  — LLM backend to use: `ollama` (default) or `lmstudio`
 - `--output PATH` — output file path (default: same folder as input, named `INPUT_translated_to_LANG.srt`)
 - `--from-lang LANG` — source language (default: `auto`, detects automatically)
 - `--to-lang LANG` — target language (default: `Polish`)
