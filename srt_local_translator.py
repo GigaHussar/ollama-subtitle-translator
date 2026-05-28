@@ -3,9 +3,9 @@ import logging
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import Callable, List
 
-from ollama_client import ollama_translate, start_ollama
+from llm_client import ollama_translate, start_ollama, lmstudio_translate, start_lmstudio
 from srt_chunks import read_srt_blocks, chunk_blocks, ensure_dir, resume_logic, merge_chunks_if_complete, CHUNK_SIZE
 from prepare_for_translation import prepare_chunk, check_block_count, rebuild_chunk
 
@@ -25,6 +25,8 @@ class TranslationConfig:
     model: str
     src_lang: str
     tgt_lang: str
+    backend_translate_fn: Callable
+    backend_start_fn: Callable
 
 
 @dataclass
@@ -47,7 +49,7 @@ def _translate_recursive(blocks: List[str], cfg: TranslationConfig, _from_split:
     text_to_translate, metadata = prepare_chunk(blocks)
 
     if len(blocks) == 1:
-        translated = ollama_translate(cfg.model, text_to_translate, cfg.src_lang, cfg.tgt_lang)
+        translated = cfg.backend_translate_fn(cfg.model, text_to_translate, cfg.src_lang, cfg.tgt_lang)
         if not check_block_count(translated, metadata):
             one_by_one = [metadata[0][0]] if _from_split else []
             return TranslationResult(rebuild_chunk(translated, metadata), one_by_one_indexes=one_by_one)
@@ -56,7 +58,7 @@ def _translate_recursive(blocks: List[str], cfg: TranslationConfig, _from_split:
         return TranslationResult(blocks[0].strip() + "\n", failed_indexes=[index])
 
     for attempt in range(1, 4):
-        translated = ollama_translate(cfg.model, text_to_translate, cfg.src_lang, cfg.tgt_lang)
+        translated = cfg.backend_translate_fn(cfg.model, text_to_translate, cfg.src_lang, cfg.tgt_lang)
         error = check_block_count(translated, metadata)
         if not error:
             split_indexes = [m[0] for m in metadata] if _from_split else []
@@ -122,7 +124,7 @@ def process(input_srt: Path, output_srt: Path, cfg: TranslationConfig, chunk_siz
     srt_text = input_srt.read_text(encoding="utf-8")
     blocks = read_srt_blocks(srt_text)
 
-    start_ollama()
+    cfg.backend_start_fn()
 
     start_block_idx, start_file_idx = resume_logic(chunk_dir, blocks)
 
@@ -148,9 +150,11 @@ def process(input_srt: Path, output_srt: Path, cfg: TranslationConfig, chunk_siz
 # Entrypoint
 # =========================
 def main(argv: List[str]):
-    parser = argparse.ArgumentParser(description="SRT translator with Ollama")
+    parser = argparse.ArgumentParser(description="SRT translator with local LLM")
     parser.add_argument("input", type=Path, help="INPUT.srt")
     parser.add_argument("model", help="MODEL_NAME (e.g., mistral, llama3, qwen, etc.)")
+    parser.add_argument("--backend", choices=["ollama", "lmstudio"], default="ollama",
+                        help="LLM backend to use (default: ollama)")
     parser.add_argument("--output", type=Path, default=None,
                         help="OUTPUT.srt (default: same folder as input, named INPUT_translated_to_LANG.srt)")
     parser.add_argument("--from-lang", default="auto",
@@ -170,7 +174,20 @@ def main(argv: List[str]):
         logger.error("Input file not found: %s", args.input)
         sys.exit(2)
 
-    cfg = TranslationConfig(model=args.model, src_lang=args.from_lang, tgt_lang=args.to_lang)
+    if args.backend == "ollama":
+        translate_fn = ollama_translate
+        start_fn = start_ollama
+    else:
+        translate_fn = lmstudio_translate
+        start_fn = lambda: start_lmstudio(args.model)
+
+    cfg = TranslationConfig(
+        model=args.model,
+        src_lang=args.from_lang,
+        tgt_lang=args.to_lang,
+        backend_translate_fn=translate_fn,
+        backend_start_fn=start_fn,
+    )
 
     try:
         process(args.input, args.output, cfg, args.chunk_size)
