@@ -12,7 +12,8 @@ logger = logging.getLogger("srt-translator")
 
 REQ_TIMEOUT_SECONDS = 300
 RESTART_WAIT_SECONDS = 90
-SERVE_BOOT_WAIT_SECONDS = 5
+OLLAMA_BOOT_WAIT_SECONDS = 5
+LMSTUDIO_BOOT_WAIT_SECONDS = 15
 MODEL_LOAD_TIMEOUT_SECONDS = 120
 MAX_RETRIES = 3
 
@@ -75,7 +76,7 @@ def start_ollama(model: str) -> None:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        time.sleep(SERVE_BOOT_WAIT_SECONDS)
+        time.sleep(OLLAMA_BOOT_WAIT_SECONDS)
         if not is_ollama_running():
             raise RuntimeError(
                 "Ollama did not start. Try running `ollama serve` manually and check for errors."
@@ -190,7 +191,7 @@ def start_lmstudio(model: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        time.sleep(SERVE_BOOT_WAIT_SECONDS)
+        time.sleep(LMSTUDIO_BOOT_WAIT_SECONDS)
         if not is_lmstudio_running():
             raise RuntimeError(
                 "LM Studio server did not start. "
