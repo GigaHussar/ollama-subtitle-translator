@@ -21,6 +21,13 @@ logger = logging.getLogger("srt-translator")
 
 
 @dataclass
+class TranslationConfig:
+    model: str
+    src_lang: str
+    tgt_lang: str
+
+
+@dataclass
 class TranslationResult:
     srt_text: str
     split_indexes: List[str] = field(default_factory=list)
@@ -31,7 +38,7 @@ class TranslationResult:
 # =========================
 # Per-chunk processing
 # =========================
-def _translate_recursive(blocks: List[str], model: str, src_lang: str, tgt_lang: str, _from_split: bool = False) -> TranslationResult:
+def _translate_recursive(blocks: List[str], cfg: TranslationConfig, _from_split: bool = False) -> TranslationResult:
     """
     Translate blocks with up to 3 attempts. On failure, splits in half and retries each half recursively.
     Single blocks get one translation attempt; if the count check fails, the original text is written as a placeholder.
@@ -40,7 +47,7 @@ def _translate_recursive(blocks: List[str], model: str, src_lang: str, tgt_lang:
     text_to_translate, metadata = prepare_chunk(blocks)
 
     if len(blocks) == 1:
-        translated = ollama_translate(model, text_to_translate, src_lang, tgt_lang)
+        translated = ollama_translate(cfg.model, text_to_translate, cfg.src_lang, cfg.tgt_lang)
         if not check_block_count(translated, metadata):
             one_by_one = [metadata[0][0]] if _from_split else []
             return TranslationResult(rebuild_chunk(translated, metadata), one_by_one_indexes=one_by_one)
@@ -49,7 +56,7 @@ def _translate_recursive(blocks: List[str], model: str, src_lang: str, tgt_lang:
         return TranslationResult(blocks[0].strip() + "\n", failed_indexes=[index])
 
     for attempt in range(1, 4):
-        translated = ollama_translate(model, text_to_translate, src_lang, tgt_lang)
+        translated = ollama_translate(cfg.model, text_to_translate, cfg.src_lang, cfg.tgt_lang)
         error = check_block_count(translated, metadata)
         if not error:
             split_indexes = [m[0] for m in metadata] if _from_split else []
@@ -58,8 +65,8 @@ def _translate_recursive(blocks: List[str], model: str, src_lang: str, tgt_lang:
 
     mid = len(blocks) // 2
     logger.info("Splitting %d blocks into %d + %d and retrying.", len(blocks), mid, len(blocks) - mid)
-    left = _translate_recursive(blocks[:mid], model, src_lang, tgt_lang, _from_split=True)
-    right = _translate_recursive(blocks[mid:], model, src_lang, tgt_lang, _from_split=True)
+    left = _translate_recursive(blocks[:mid], cfg, _from_split=True)
+    right = _translate_recursive(blocks[mid:], cfg, _from_split=True)
     return TranslationResult(
         srt_text=left.srt_text + "\n" + right.srt_text,
         split_indexes=left.split_indexes + right.split_indexes,
@@ -68,13 +75,13 @@ def _translate_recursive(blocks: List[str], model: str, src_lang: str, tgt_lang:
     )
 
 
-def translate_chunk(idx: int, total_chunks: int, piece_blocks: List[str], chunk_dir: Path, model: str, src_lang: str, tgt_lang: str, file_idx: int) -> TranslationResult:
+def translate_chunk(idx: int, total_chunks: int, piece_blocks: List[str], chunk_dir: Path, cfg: TranslationConfig, file_idx: int) -> TranslationResult:
     """Translate one chunk, write it to disk, return problem indexes."""
     first_lines = piece_blocks[0].strip().splitlines()
     preview = " ".join(first_lines[2:])[:120] if len(first_lines) >= 3 else ""
     logger.info("Translating chunk %d/%d. Preview: %s", idx + 1, total_chunks, preview)
 
-    result = _translate_recursive(piece_blocks, model, src_lang, tgt_lang)
+    result = _translate_recursive(piece_blocks, cfg)
 
     chunk_file = chunk_dir / f"{file_idx:06d}.srt"
     chunk_file.write_text(result.srt_text, encoding="utf-8")
@@ -105,7 +112,7 @@ def _log_problem_summary(result: TranslationResult):
 # =========================
 # Main processing
 # =========================
-def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_lang: str, chunk_size: int = CHUNK_SIZE):
+def process(input_srt: Path, output_srt: Path, cfg: TranslationConfig, chunk_size: int = CHUNK_SIZE):
     logger.info("Input:  %s", input_srt)
     logger.info("Output: %s", output_srt)
     chunk_dir = output_srt.parent / (output_srt.stem + "_chunks")
@@ -127,7 +134,7 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
 
     combined = TranslationResult(srt_text="")
     for i, piece_blocks in enumerate(chunked_remaining):
-        result = translate_chunk(i, total_remaining, piece_blocks, chunk_dir, model, src_lang, tgt_lang, start_file_idx + i)
+        result = translate_chunk(i, total_remaining, piece_blocks, chunk_dir, cfg, start_file_idx + i)
         combined.split_indexes.extend(result.split_indexes)
         combined.one_by_one_indexes.extend(result.one_by_one_indexes)
         combined.failed_indexes.extend(result.failed_indexes)
@@ -163,8 +170,10 @@ def main(argv: List[str]):
         logger.error("Input file not found: %s", args.input)
         sys.exit(2)
 
+    cfg = TranslationConfig(model=args.model, src_lang=args.from_lang, tgt_lang=args.to_lang)
+
     try:
-        process(args.input, args.output, args.model, args.from_lang, args.to_lang, args.chunk_size)
+        process(args.input, args.output, cfg, args.chunk_size)
     except Exception as e:
         logger.exception("Fatal error: %s", e)
         sys.exit(3)
