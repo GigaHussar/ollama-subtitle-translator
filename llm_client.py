@@ -12,8 +12,9 @@ logger = logging.getLogger("srt-translator")
 
 REQ_TIMEOUT_SECONDS = 300
 RESTART_WAIT_SECONDS = 90
-OLLAMA_BOOT_WAIT_SECONDS = 5
-LMSTUDIO_BOOT_WAIT_SECONDS = 15
+OLLAMA_BOOT_WAIT_SECONDS = 30
+LMSTUDIO_BOOT_WAIT_SECONDS = 60
+BOOT_POLL_INTERVAL_SECONDS = 2
 MODEL_LOAD_TIMEOUT_SECONDS = 120
 MAX_RETRIES = 3
 
@@ -24,6 +25,16 @@ OLLAMA_TAGS_ENDPOINT = f"{OLLAMA_URL}/api/tags"
 LMSTUDIO_URL = "http://127.0.0.1:1234"
 LMSTUDIO_CHAT_ENDPOINT = f"{LMSTUDIO_URL}/v1/chat/completions"
 LMSTUDIO_MODELS_ENDPOINT = f"{LMSTUDIO_URL}/v1/models"
+
+
+def _wait_until_ready(check_fn, timeout: int) -> bool:
+    elapsed = 0
+    while elapsed < timeout:
+        if check_fn():
+            return True
+        time.sleep(BOOT_POLL_INTERVAL_SECONDS)
+        elapsed += BOOT_POLL_INTERVAL_SECONDS
+    return False
 
 
 def _build_system_instructions(src_lang: str, tgt_lang: str) -> str:
@@ -76,8 +87,7 @@ def start_ollama(model: str) -> None:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        time.sleep(OLLAMA_BOOT_WAIT_SECONDS)
-        if not is_ollama_running():
+        if not _wait_until_ready(is_ollama_running, OLLAMA_BOOT_WAIT_SECONDS):
             raise RuntimeError(
                 "Ollama did not start. Try running `ollama serve` manually and check for errors."
             )
@@ -191,8 +201,7 @@ def start_lmstudio(model: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        time.sleep(LMSTUDIO_BOOT_WAIT_SECONDS)
-        if not is_lmstudio_running():
+        if not _wait_until_ready(is_lmstudio_running, LMSTUDIO_BOOT_WAIT_SECONDS):
             raise RuntimeError(
                 "LM Studio server did not start. "
                 "Make sure LM Studio is installed and try opening the app first."
