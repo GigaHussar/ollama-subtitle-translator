@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List
 
 from ollama_client import ollama_translate, start_ollama
-from srt_split_and_merge import read_srt_blocks, chunk_blocks, ensure_dir, resume_logic, merge_chunks_if_complete, CHUNK_SIZE
+from srt_chunks import read_srt_blocks, chunk_blocks, ensure_dir, resume_logic, merge_chunks_if_complete, CHUNK_SIZE
 from prepare_for_translation import prepare_chunk, check_block_count, rebuild_chunk
 
 # =========================
