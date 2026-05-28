@@ -1,3 +1,4 @@
+import shutil
 import time
 import json
 import logging
@@ -51,6 +52,10 @@ def is_ollama_running() -> bool:
 
 
 def start_ollama() -> None:
+    if shutil.which("ollama") is None:
+        raise RuntimeError(
+            "Ollama not found in PATH. Install Ollama and make sure `ollama` is available in your terminal."
+        )
     if is_ollama_running():
         logger.info("Ollama is already running.")
         return
@@ -65,7 +70,9 @@ def start_ollama() -> None:
     if is_ollama_running():
         logger.info("Ollama started successfully.")
     else:
-        logger.warning("Ollama may still be starting... continuing with retries later.")
+        raise RuntimeError(
+            "Ollama did not start. Try running `ollama serve` manually and check for errors."
+        )
 
 
 def _kill_ollama() -> None:
@@ -145,7 +152,22 @@ def is_lmstudio_running() -> bool:
         return False
 
 
+def _is_model_loaded(model: str) -> bool:
+    try:
+        r = requests.get(LMSTUDIO_MODELS_ENDPOINT, timeout=2)
+        if r.status_code != 200:
+            return False
+        return any(m.get("id") == model for m in r.json().get("data", []))
+    except Exception:
+        return False
+
+
 def start_lmstudio(model: str) -> None:
+    if shutil.which("lms") is None:
+        raise RuntimeError(
+            "LM Studio CLI (lms) not found in PATH. "
+            "Install LM Studio and add its CLI folder to PATH before using --backend lmstudio."
+        )
     if not is_lmstudio_running():
         logger.info("Starting LM Studio server...")
         subprocess.Popen(
@@ -155,11 +177,17 @@ def start_lmstudio(model: str) -> None:
         )
         time.sleep(SERVE_BOOT_WAIT_SECONDS)
         if not is_lmstudio_running():
-            logger.warning("LM Studio server may still be starting... continuing with retries later.")
+            raise RuntimeError(
+                "LM Studio server did not start. "
+                "Make sure LM Studio is installed and try opening the app first."
+            )
     else:
         logger.info("LM Studio server is already running.")
-    logger.info("Loading model %s...", model)
-    subprocess.run(["lms", "load", model], check=False)
+    if _is_model_loaded(model):
+        logger.info("Model %s is already loaded.", model)
+    else:
+        logger.info("Loading model %s...", model)
+        subprocess.run(["lms", "load", model, "-y"], check=False)
 
 
 def _restart_lmstudio(model: str) -> None:
