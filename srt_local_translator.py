@@ -77,11 +77,12 @@ def _translate_recursive(blocks: List[str], cfg: TranslationConfig, _from_split:
     )
 
 
-def translate_chunk(idx: int, total_chunks: int, piece_blocks: List[str], chunk_dir: Path, cfg: TranslationConfig, file_idx: int) -> TranslationResult:
+def translate_chunk(piece_blocks: List[str], chunk_dir: Path, cfg: TranslationConfig, file_idx: int, total_files: int) -> TranslationResult:
     """Translate one chunk, write it to disk, return problem indexes."""
     first_lines = piece_blocks[0].strip().splitlines()
     preview = " ".join(first_lines[2:])[:120] if len(first_lines) >= 3 else ""
-    logger.info("Translating chunk %d/%d. Preview: %s", idx + 1, total_chunks, preview)
+    pct = round((file_idx + 1) / total_files * 100)
+    logger.info("[%d/%d | %d%%] %s", file_idx + 1, total_files, pct, preview)
 
     result = _translate_recursive(piece_blocks, cfg)
 
@@ -136,7 +137,7 @@ def process(input_srt: Path, output_srt: Path, cfg: TranslationConfig, chunk_siz
 
     combined = TranslationResult(srt_text="")
     for i, piece_blocks in enumerate(chunked_remaining):
-        result = translate_chunk(i, total_remaining, piece_blocks, chunk_dir, cfg, start_file_idx + i)
+        result = translate_chunk(piece_blocks, chunk_dir, cfg, start_file_idx + i, total_files)
         combined.split_indexes.extend(result.split_indexes)
         combined.one_by_one_indexes.extend(result.one_by_one_indexes)
         combined.failed_indexes.extend(result.failed_indexes)
