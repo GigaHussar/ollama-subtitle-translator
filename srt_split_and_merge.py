@@ -23,12 +23,6 @@ def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
 
-def existing_chunk_count(chunk_dir: Path) -> int:
-    if not chunk_dir.exists():
-        return 0
-    return sum(1 for f in chunk_dir.iterdir() if f.is_file() and f.suffix == ".srt")
-
-
 def resume_logic(chunk_dir: Path, blocks: List[str]) -> Tuple[int, int]:
     """
     Determines where to resume translation by reading the highest-numbered chunk file.

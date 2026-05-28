@@ -1,14 +1,6 @@
 import re
 from typing import List, Tuple
 
-_ITALICS_TAG_RE = re.compile(r"</?i>", flags=re.IGNORECASE)
-
-
-def strip_italics(text: str) -> str:
-    # Call this from prepare_chunk if the LLM has problems with <i> tags
-    return _ITALICS_TAG_RE.sub("", text)
-
-
 
 def prepare_chunk(blocks: List[str]) -> Tuple[str, List[Tuple[str, str]]]:
     """
