@@ -135,16 +135,21 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
 def main(argv: List[str]):
     parser = argparse.ArgumentParser(description="SRT translator with Ollama")
     parser.add_argument("input", type=Path, help="INPUT.srt")
-    parser.add_argument("output", type=Path, help="OUTPUT.srt")
     parser.add_argument("model", help="MODEL_NAME (e.g., mistral, llama3, qwen, etc.)")
-    parser.add_argument("--from-lang", default="English",
-                        help='Source language name (e.g., "English", "fr", "日本語", or "auto" to detect)')
+    parser.add_argument("--output", type=Path, default=None,
+                        help="OUTPUT.srt (default: same folder as input, named INPUT_translated_to_LANG.srt)")
+    parser.add_argument("--from-lang", default="auto",
+                        help='Source language name (e.g., "English", "fr", "日本語", or "auto" to detect); default: auto')
     parser.add_argument("--to-lang", default="Polish",
                         help='Target language name (e.g., "Polish", "pl", "Español", "Русский")')
     parser.add_argument("--chunk-size", type=int, default=CHUNK_SIZE,
                         help=f"Number of subtitle blocks per translation chunk (default: {CHUNK_SIZE}, tested with 10)")
 
     args = parser.parse_args(argv[1:])
+
+    if args.output is None:
+        lang_slug = args.to_lang.replace(" ", "_")
+        args.output = args.input.parent / f"{args.input.stem}_translated_to_{lang_slug}.srt"
 
     if not args.input.exists():
         logger.error("Input file not found: %s", args.input)
