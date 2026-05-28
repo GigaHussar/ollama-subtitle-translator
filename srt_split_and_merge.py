@@ -1,7 +1,7 @@
 import re
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 logger = logging.getLogger("srt-translator")
 
@@ -27,6 +27,39 @@ def existing_chunk_count(chunk_dir: Path) -> int:
     if not chunk_dir.exists():
         return 0
     return sum(1 for f in chunk_dir.iterdir() if f.is_file() and f.suffix == ".srt")
+
+
+def resume_logic(chunk_dir: Path, blocks: List[str]) -> Tuple[int, int]:
+    """
+    Determines where to resume translation by reading the highest-numbered chunk file.
+    Returns (start_block_idx, start_file_idx):
+      start_block_idx -- 0-based position in blocks[] to resume from
+      start_file_idx  -- number to use for the next chunk file name
+    """
+    if not chunk_dir.exists():
+        return 0, 0
+
+    chunk_files = sorted(chunk_dir.glob("*.srt"))
+    if not chunk_files:
+        return 0, 0
+
+    last_file = chunk_files[-1]
+    content = last_file.read_text(encoding="utf-8")
+    srt_blocks = [b.strip() for b in re.split(r"\n\s*\n", content) if b.strip()]
+    valid_indexes = [
+        int(b.splitlines()[0].strip())
+        for b in srt_blocks
+        if b.splitlines() and b.splitlines()[0].strip().isdigit()
+    ]
+
+    if not valid_indexes:
+        logger.warning("Last chunk file %s has no valid SRT blocks — starting from scratch.", last_file.name)
+        return 0, 0
+
+    last_srt_index = max(valid_indexes)
+    logger.info("Resuming after SRT block %d (last file: %s).", last_srt_index, last_file.name)
+    # SRT indexes are 1-based; next block is at 0-based position last_srt_index
+    return last_srt_index, len(chunk_files)
 
 
 def merge_chunks_if_complete(chunk_dir: Path, total_chunks: int, out_path: Path):
