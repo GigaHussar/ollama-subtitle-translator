@@ -1,8 +1,9 @@
 import sys
 import logging
 import argparse
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 
 from ollama_client import ollama_translate, start_ollama
 from srt_split_and_merge import read_srt_blocks, chunk_blocks, ensure_dir, resume_logic, merge_chunks_if_complete, CHUNK_SIZE
@@ -18,15 +19,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger("srt-translator")
 
+
+@dataclass
+class TranslationResult:
+    srt_text: str
+    split_indexes: List[str] = field(default_factory=list)
+    one_by_one_indexes: List[str] = field(default_factory=list)
+    failed_indexes: List[str] = field(default_factory=list)
+
+
 # =========================
 # Per-chunk processing
 # =========================
-def _translate_recursive(blocks: List[str], model: str, src_lang: str, tgt_lang: str, _from_split: bool = False) -> Tuple[str, List[str], List[str], List[str]]:
+def _translate_recursive(blocks: List[str], model: str, src_lang: str, tgt_lang: str, _from_split: bool = False) -> TranslationResult:
     """
     Translate blocks with up to 3 attempts. On failure, splits in half and retries each half recursively.
     Single blocks get one translation attempt; if the count check fails, the original text is written as a placeholder.
-    Returns (srt_text, split_indexes, one_by_one_indexes, failed_indexes).
-    Each returned piece ends with \\n so joining two pieces with \\n gives the blank line separator.
+    Each returned srt_text ends with \\n so joining two pieces with \\n gives the blank line separator.
     """
     text_to_translate, metadata = prepare_chunk(blocks)
 
@@ -34,57 +43,62 @@ def _translate_recursive(blocks: List[str], model: str, src_lang: str, tgt_lang:
         translated = ollama_translate(model, text_to_translate, src_lang, tgt_lang)
         if not check_block_count(translated, metadata):
             one_by_one = [metadata[0][0]] if _from_split else []
-            return rebuild_chunk(translated, metadata), [], one_by_one, []
+            return TranslationResult(rebuild_chunk(translated, metadata), one_by_one_indexes=one_by_one)
         index = metadata[0][0]
         logger.warning("Block %s could not be translated — writing original as placeholder.", index)
-        return blocks[0].strip() + "\n", [], [], [index]
+        return TranslationResult(blocks[0].strip() + "\n", failed_indexes=[index])
 
     for attempt in range(1, 4):
         translated = ollama_translate(model, text_to_translate, src_lang, tgt_lang)
         error = check_block_count(translated, metadata)
         if not error:
             split_indexes = [m[0] for m in metadata] if _from_split else []
-            return rebuild_chunk(translated, metadata), split_indexes, [], []
+            return TranslationResult(rebuild_chunk(translated, metadata), split_indexes=split_indexes)
         logger.warning("Attempt %d: %s — retrying.", attempt, error)
 
     mid = len(blocks) // 2
     logger.info("Splitting %d blocks into %d + %d and retrying.", len(blocks), mid, len(blocks) - mid)
-    left_srt, ls, lo, lf = _translate_recursive(blocks[:mid], model, src_lang, tgt_lang, _from_split=True)
-    right_srt, rs, ro, rf = _translate_recursive(blocks[mid:], model, src_lang, tgt_lang, _from_split=True)
-    return left_srt + "\n" + right_srt, ls + rs, lo + ro, lf + rf
+    left = _translate_recursive(blocks[:mid], model, src_lang, tgt_lang, _from_split=True)
+    right = _translate_recursive(blocks[mid:], model, src_lang, tgt_lang, _from_split=True)
+    return TranslationResult(
+        srt_text=left.srt_text + "\n" + right.srt_text,
+        split_indexes=left.split_indexes + right.split_indexes,
+        one_by_one_indexes=left.one_by_one_indexes + right.one_by_one_indexes,
+        failed_indexes=left.failed_indexes + right.failed_indexes,
+    )
 
 
-def translate_chunk(idx: int, total_chunks: int, piece_blocks: List[str], chunk_dir: Path, model: str, src_lang: str, tgt_lang: str, file_idx: int) -> Tuple[List[str], List[str], List[str]]:
-    """Translate one chunk and write it to disk. Returns list of problem SRT indexes."""
+def translate_chunk(idx: int, total_chunks: int, piece_blocks: List[str], chunk_dir: Path, model: str, src_lang: str, tgt_lang: str, file_idx: int) -> TranslationResult:
+    """Translate one chunk, write it to disk, return problem indexes."""
     first_lines = piece_blocks[0].strip().splitlines()
     preview = " ".join(first_lines[2:])[:120] if len(first_lines) >= 3 else ""
     logger.info("Translating chunk %d/%d. Preview: %s", idx + 1, total_chunks, preview)
 
-    chunk_srt, split_indexes, one_by_one_indexes, failed_indexes = _translate_recursive(piece_blocks, model, src_lang, tgt_lang)
+    result = _translate_recursive(piece_blocks, model, src_lang, tgt_lang)
 
     chunk_file = chunk_dir / f"{file_idx:06d}.srt"
-    chunk_file.write_text(chunk_srt, encoding="utf-8")
+    chunk_file.write_text(result.srt_text, encoding="utf-8")
     logger.info("Wrote %s (%d bytes).", chunk_file.name, chunk_file.stat().st_size)
 
-    return split_indexes, one_by_one_indexes, failed_indexes
+    return result
 
 
-def _log_problem_summary(split_indexes: List[str], one_by_one_indexes: List[str], failed_indexes: List[str]):
+def _log_problem_summary(result: TranslationResult):
     """Log end-of-run warnings for subtitle indexes that needed special handling."""
-    if split_indexes:
+    if result.split_indexes:
         logger.warning(
             "%d subtitle(s) were translated successfully only after the chunk was split: %s",
-            len(split_indexes), ", ".join(split_indexes),
+            len(result.split_indexes), ", ".join(result.split_indexes),
         )
-    if one_by_one_indexes:
+    if result.one_by_one_indexes:
         logger.warning(
             "%d subtitle(s) were translated one by one: %s",
-            len(one_by_one_indexes), ", ".join(one_by_one_indexes),
+            len(result.one_by_one_indexes), ", ".join(result.one_by_one_indexes),
         )
-    if failed_indexes:
+    if result.failed_indexes:
         logger.warning(
             "%d subtitle(s) could not be translated — original text used as placeholder: %s",
-            len(failed_indexes), ", ".join(failed_indexes),
+            len(result.failed_indexes), ", ".join(result.failed_indexes),
         )
 
 
@@ -98,11 +112,9 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
     ensure_dir(chunk_dir)
     logger.info("Chunk folder: %s", chunk_dir)
 
-    # Read input and determine resume position
     srt_text = input_srt.read_text(encoding="utf-8")
     blocks = read_srt_blocks(srt_text)
 
-    # Ensure Ollama is running
     start_ollama()
 
     start_block_idx, start_file_idx = resume_logic(chunk_dir, blocks)
@@ -113,21 +125,17 @@ def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_la
     total_files = start_file_idx + total_remaining
     logger.info("%d blocks remaining, %d chunks (chunk size = %d)", len(remaining_blocks), total_remaining, chunk_size)
 
-    # Translate each chunk and write to disk
-    all_split: List[str] = []
-    all_one_by_one: List[str] = []
-    all_failed: List[str] = []
+    combined = TranslationResult(srt_text="")
     for i, piece_blocks in enumerate(chunked_remaining):
-        file_idx = start_file_idx + i
-        split, one_by_one, failed = translate_chunk(i, total_remaining, piece_blocks, chunk_dir, model, src_lang, tgt_lang, file_idx)
-        all_split.extend(split)
-        all_one_by_one.extend(one_by_one)
-        all_failed.extend(failed)
+        result = translate_chunk(i, total_remaining, piece_blocks, chunk_dir, model, src_lang, tgt_lang, start_file_idx + i)
+        combined.split_indexes.extend(result.split_indexes)
+        combined.one_by_one_indexes.extend(result.one_by_one_indexes)
+        combined.failed_indexes.extend(result.failed_indexes)
 
-    # Combine all chunk files into the final output
     merge_chunks_if_complete(chunk_dir, total_files, output_srt)
-    _log_problem_summary(all_split, all_one_by_one, all_failed)
+    _log_problem_summary(combined)
     logger.info("Done.")
+
 
 # =========================
 # Entrypoint
