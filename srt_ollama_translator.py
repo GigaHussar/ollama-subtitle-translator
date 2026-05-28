@@ -94,7 +94,7 @@ def _log_problem_summary(split_indexes: List[str], one_by_one_indexes: List[str]
 def process(input_srt: Path, output_srt: Path, model: str, src_lang: str, tgt_lang: str, chunk_size: int = CHUNK_SIZE):
     logger.info("Input:  %s", input_srt)
     logger.info("Output: %s", output_srt)
-    chunk_dir = Path(str(output_srt.with_suffix("")) + "_chunks")
+    chunk_dir = output_srt.parent / (output_srt.stem + "_chunks")
     ensure_dir(chunk_dir)
     logger.info("Chunk folder: %s", chunk_dir)
 
